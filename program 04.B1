@@ -1,0 +1,102 @@
+// Drivers Collection
+{
+  "_id": ObjectId("DRV101"),
+  "name": "Alex Smith",
+  "total_earnings": 1500.50,
+  "status": "Active"
+}
+
+// Passengers Collection
+{
+  "_id": ObjectId("PAS502"),
+  "name": "Sarah Connor",
+  "ride_history": [] // Array of Trip ObjectIds
+}
+
+// Trips Collection (Referencing + Embedded Logs)
+{
+  "_id": ObjectId("TRIP999"),
+  "driver_id": ObjectId("DRV101"),
+  "passenger_id": ObjectId("PAS502"),
+  "fare_amount": 25.00,
+  "status": "Scheduled",
+  "trip_logs": { // Embedded document
+    "route": "Point A to Point B",
+    "timestamps": { "start": ISODate("..."), "end": null },
+    "fare_breakdown": { "base": 5, "distance": 15, "surge": 5 }
+  }
+}
+
+
+
+db.createCollection("trips", {
+   validator: {
+      $jsonSchema: {
+         bsonType: "object",
+         required: ["fare_amount", "status", "driver_id", "passenger_id"],
+         properties: {
+            fare_amount: {
+               bsonType: "number",
+               exclusiveMinimum: 0, // Greater than zero
+               description: "Fare must be a positive number"
+            },
+            status: {
+               enum: ["Scheduled", "Completed", "Canceled"],
+               description: "Can only be one of the predefined categories"
+            }
+         }
+      }
+   }
+});
+
+
+
+
+const session = db.getMongo().startSession();
+session.startTransaction();
+
+try {
+    const tripId = ObjectId("TRIP999");
+    
+    // Fetch trip details to get driver/passenger IDs and fare
+    const trip = db.trips.findOne({ _id: tripId }, { session });
+
+    if (!trip) throw new Error("Trip not found");
+
+    // 3. Update trip status to "Completed"
+    db.trips.updateOne(
+        { _id: tripId },
+        { 
+            $set: { 
+                "status": "Completed", 
+                "trip_logs.timestamps.end": new Date() 
+            } 
+        },
+        { session }
+    );
+
+    // 3. Increment driver earnings using $inc
+    db.drivers.updateOne(
+        { _id: trip.driver_id },
+        { $inc: { total_earnings: trip.fare_amount } },
+        { session }
+    );
+
+    // 4. Update passenger ride history
+    db.passengers.updateOne(
+        { _id: trip.passenger_id },
+        { $push: { ride_history: tripId } },
+        { session }
+    );
+
+    // 5. Commit the transaction after successful updates
+    session.commitTransaction();
+    console.log("Ride completed successfully: Earnings and history updated.");
+
+} catch (error) {
+    // 5. Abort the transaction if any step fails
+    console.log("Transaction failed. Aborting changes.", error);
+    session.abortTransaction();
+} finally {
+    session.endSession();
+}
