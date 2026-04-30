@@ -1,0 +1,95 @@
+// Policyholders Collection
+{
+  "_id": ObjectId("PH001"),
+  "name": "Jane Doe",
+  "policy_limit": 50000,
+  "coverage_balance": 45000
+}
+
+// Hospitals Collection
+{
+  "_id": ObjectId("HOS99"),
+  "name": "City General Hospital",
+  "location": "Downtown"
+}
+
+// Claims Collection (The Reference Bridge)
+{
+  "_id": ObjectId("CLM123"),
+  "policyholder_id": ObjectId("PH001"),
+  "hospital_id": ObjectId("HOS99"),
+  "claim_amount": 2000,
+  "status": "Pending"
+}
+
+
+
+db.createCollection("claims", {
+   validator: {
+      $jsonSchema: {
+         bsonType: "object",
+         required: ["policyholder_id", "hospital_id", "claim_amount", "status"],
+         properties: {
+            claim_amount: {
+               bsonType: "number",
+               minimum: 0,
+               description: "Must be a positive number"
+            },
+            status: {
+               enum: ["Pending", "Approved", "Rejected"]
+            }
+         }
+      }
+   }
+});
+
+
+
+const session = db.getMongo().startSession();
+session.startTransaction();
+
+try {
+    const claimId = ObjectId("CLM123");
+    const claim = db.claims.findOne({ _id: claimId }, { session });
+    
+    // Fetch the specific policyholder to check coverage
+    const policy = db.policyholders.findOne({ _id: claim.policyholder_id }, { session });
+
+    // 2 & 5. Validation Check: Ensure claim does not exceed balance
+    if (claim.claim_amount > policy.coverage_balance) {
+        console.log("Validation Failed: Claim exceeds policy coverage limits.");
+        session.abortTransaction();
+    } else {
+        // 3. Update Claim Status
+        db.claims.updateOne(
+            { _id: claimId },
+            { $set: { status: "Approved" } },
+            { session }
+        );
+
+        // 3. Deduct approved amount from policyholder balance
+        db.policyholders.updateOne(
+            { _id: claim.policyholder_id },
+            { $inc: { coverage_balance: -claim.claim_amount } },
+            { session }
+        );
+
+        // 4. Insert into financial ledger (claim_transactions)
+        db.claim_transactions.insertOne({
+            claim_id: claimId,
+            policyholder_id: claim.policyholder_id,
+            amount_processed: claim.claim_amount,
+            timestamp: new Date(),
+            transaction_type: "DEBIT"
+        }, { session });
+
+        // 5. Commit the transaction
+        session.commitTransaction();
+        console.log("Claim processed and ledger updated successfully.");
+    }
+} catch (error) {
+    console.log("System error. Rolling back transaction:", error);
+    session.abortTransaction();
+} finally {
+    session.endSession();
+}
