@@ -1,0 +1,86 @@
+// Example Hostel Document
+{
+  "_id": ObjectId("65f1a..."),
+  "name": "North Hall",
+  "rooms": [
+    {
+      "room_number": "101A",
+      "capacity": 2,
+      "current_occupancy": 1,
+      "students": [ "STU001" ]
+    }
+  ]
+}
+
+
+
+
+db.createCollection("hostels", {
+   validator: {
+      $jsonSchema: {
+         bsonType: "object",
+         properties: {
+            rooms: {
+               bsonType: "array",
+               items: {
+                  bsonType: "object",
+                  properties: {
+                     current_occupancy: { bsonType: "int" },
+                     capacity: { bsonType: "int" }
+                  },
+                  // Validation logic: occupancy <= capacity
+                  // Note: Complex logic like comparing two fields is often 
+                  // handled via $expr in newer MongoDB versions.
+               }
+            }
+         }
+      }
+   }
+});
+
+
+
+
+// Start the session for the transaction
+const session = db.getMongo().startSession();
+session.startTransaction();
+
+try {
+    const hostelId = ObjectId("65f1a..."); // Target Hostel
+    const roomNo = "101A";                // Target Room
+    const newStudentId = "STU002";        // Student to add
+
+    // Find the room to check capacity before updating
+    const hostel = db.hostels.findOne(
+        { _id: hostelId, "rooms.room_number": roomNo },
+        { "rooms.$": 1 },
+        { session }
+    );
+
+    const room = hostel.rooms[0];
+
+    // 5. Abort if occupancy limit is reached
+    if (room.current_occupancy >= room.capacity) {
+        console.log("Error: Room is at full capacity.");
+        session.abortTransaction();
+    } else {
+        // 3. Increment occupancy and push student ID
+        db.hostels.updateOne(
+            { _id: hostelId, "rooms.room_number": roomNo },
+            { 
+                $inc: { "rooms.$.current_occupancy": 1 },
+                $push: { "rooms.$.students": newStudentId }
+            },
+            { session }
+        );
+
+        // 4. Commit the transaction
+        session.commitTransaction();
+        console.log("Student assigned successfully.");
+    }
+} catch (error) {
+    console.log("Transaction aborted due to error: ", error);
+    session.abortTransaction();
+} finally {
+    session.endSession();
+}
