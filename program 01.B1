@@ -1,0 +1,81 @@
+// Example document structure for the iot_devices collection
+{
+  "_id": ObjectId("65f1a..."),
+  "device_name": "Sensor_Alpha_01",
+  "factory_location": "Berlin",
+  "status": "active",
+  "firmware_config": {
+    "firmware_version": "v1.0.0",
+    "network_settings": {
+      "ip": "192.168.1.50",
+      "protocol": "MQTT"
+    },
+    "security_credentials": "encrypted_token_xyz",
+    "last_updated": ISODate("2024-03-13T10:00:00Z")
+  },
+  "maintenance_logs": [] 
+}
+
+
+db.createCollection("iot_devices", {
+   validator: {
+      $jsonSchema: {
+         bsonType: "object",
+         required: ["firmware_config"],
+         properties: {
+            "firmware_config.firmware_version": {
+               bsonType: "string",
+               pattern: "^v\\d+\\.\\d+\\.\\d+$", // Matches v1.0.0, v2.1.4, etc.
+               description: "Must be a string in vX.X.X format and is required"
+            }
+         }
+      }
+   }
+});
+
+
+
+// 3. Start a MongoDB transaction session
+const session = db.getMongo().startSession();
+session.startTransaction();
+
+try {
+    const deviceId = "DEVIC_ID_HERE";
+    const newVersion = "v1.2.0";
+    const currentTime = new Date();
+
+    // 4. Update the firmware version and timestamp
+    const updateResult = db.iot_devices.updateOne(
+        { _id: deviceId },
+        { 
+            $set: { 
+                "firmware_config.firmware_version": newVersion,
+                "firmware_config.last_updated": currentTime
+            },
+            $push: { 
+                "maintenance_logs": { 
+                    "event": "Firmware Upgrade", 
+                    "version": newVersion, 
+                    "timestamp": currentTime 
+                }
+            }
+        },
+        { session }
+    );
+
+    // Check if the update actually matched a document
+    if (updateResult.matchedCount === 0) {
+        throw new Error("Device not found");
+    }
+
+    // Commit the transaction if updates succeed
+    session.commitTransaction();
+    print("Transaction committed successfully.");
+
+} catch (error) {
+    // 5. Abort the transaction if any operation fails
+    print("Transaction aborted due to error: " + error.message);
+    session.abortTransaction();
+} finally {
+    session.endSession();
+}
