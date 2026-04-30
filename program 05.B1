@@ -1,0 +1,93 @@
+// Vendors Collection
+{
+  "_id": ObjectId("VEN456"),
+  "vendor_name": "Global Tech Corp",
+  "status": "Inactive",
+  "location": "Singapore"
+}
+
+// Products Collection
+{
+  "_id": ObjectId("PROD789"),
+  "product_name": "Semiconductor Chip X1",
+  "category": "Electronics"
+}
+
+// Contracts Collection (Junction Collection)
+{
+  "_id": ObjectId("CON001"),
+  "vendor_id": ObjectId("VEN456"),
+  "product_id": ObjectId("PROD789"),
+  "contract_value": 150000,
+  "contract_start_date": ISODate("2024-01-01T00:00:00Z"),
+  "contract_end_date": ISODate("2026-12-31T00:00:00Z")
+}
+
+
+
+db.createCollection("contracts", {
+   validator: {
+      $jsonSchema: {
+         bsonType: "object",
+         required: ["vendor_id", "product_id", "contract_value", "contract_end_date"],
+         properties: {
+            contract_value: {
+               bsonType: "number",
+               exclusiveMinimum: 0,
+               description: "Contract value must be a positive number"
+            },
+            contract_end_date: {
+               bsonType: "date",
+               // Note: Dynamic "future date" validation is typically 
+               // handled at the application/transaction level.
+               description: "Must be a valid date"
+            }
+         }
+      }
+   }
+});
+
+
+
+const session = db.getMongo().startSession();
+session.startTransaction();
+
+try {
+    const newContract = {
+        vendor_id: ObjectId("VEN456"),
+        product_id: ObjectId("PROD789"),
+        contract_value: 150000,
+        contract_end_date: new Date("2026-12-31") // A future date
+    };
+
+    const currentTime = new Date();
+
+    // 2 & 5. Validation Check: Ensure contract_end_date is in the future
+    if (newContract.contract_end_date <= currentTime) {
+        console.log("Validation Failed: Contract end date must be in the future.");
+        session.abortTransaction();
+    } else if (newContract.contract_value <= 0) {
+        console.log("Validation Failed: Contract value must be positive.");
+        session.abortTransaction();
+    } else {
+        // 3. Insert new contract document
+        db.contracts.insertOne(newContract, { session });
+
+        // 4. Update vendor status to "Active"
+        db.vendors.updateOne(
+            { _id: newContract.vendor_id },
+            { $set: { status: "Active" } },
+            { session }
+        );
+
+        // 5. Commit the transaction
+        session.commitTransaction();
+        console.log("Contract created and vendor status activated successfully.");
+    }
+} catch (error) {
+    // 5. Abort the transaction if any system error occurs
+    console.log("Transaction aborted due to error:", error);
+    session.abortTransaction();
+} finally {
+    session.endSession();
+}
